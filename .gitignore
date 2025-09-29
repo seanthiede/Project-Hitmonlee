@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+
+# Virtual env
+venv/
+
+# Data & cache
+raw/
+data/
+logs/
+
+# macOS
+.DS_Store
