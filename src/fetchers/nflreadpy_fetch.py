@@ -41,15 +41,22 @@ logger = logging.getLogger("nfl_fetcher")
 
 # small helper: write parquet safely
 def write_parquet(df: pd.DataFrame, path: Path):
+    
+    # Stelle sicher, dass alle Spaltennamen Strings sind
+    df.columns = [str(col) for col in df.columns]
+
+    # Zielordner erstellen, falls nicht vorhanden
     path.parent.mkdir(parents=True, exist_ok=True)
+    
     try:
       df.to_parquet(path, index=False)
       logger.info(f"Wrote {len(df)} rows to {path}")
     except Exception as e:
       # fallback to csv if parquet fails for any reason
+      logger.warning(f"Parquet write failed ({e}); wrote CSV to {csv_path}")
       csv_path = path.with_suffix(".csv")
       df.to_csv(csv_path, index=False)
-      logger.warning(f"Parquet write failed ({e}); wrote CSV to {csv_path}")
+      logger.info(f"Wrote {len(df)} rows to {csv_path}")
 
 def use_nfl_library_available():
   """
@@ -135,7 +142,7 @@ def fetch_rosters(seasons=[2023], force=False, sleep_between=0.5):
     
     # Try nfl_data_py next (if available)
     if 'nfl_data_py' in mods:
-      npd = mods['nfl_data_py']
+      ndp = mods['nfl_data_py']
       try:
         got = None
         if hasattr(ndp, "get_rosters"):
@@ -164,4 +171,105 @@ def fetch_rosters(seasons=[2023], force=False, sleep_between=0.5):
   return pd.concat(results, ignore_index=True)
 
 def fetch_gamelogs(seasons=[2023], force=False, sleep_between=0.5):
-  pass
+  """
+    Lade Gamelogs (per-game stats) für gegebene Seasons.
+    Verhalten analog zu fetch_rosters.
+  """
+
+  mods = use_nfl_library_available()
+  results = []
+  for s in seasons:
+    out_path = RAW_DIR / f"gamelogs_{s}.parquet"
+    if out_path.exists() and not force:
+      logger.info(f"{out_path} already exists -> skipping (use --force to overwrite)")
+      try:
+        df = pd.read_parquet(out_path)
+        results.append(df)
+        continue
+      except Exception:
+        logger.warning(f"Failed to read existing {out_path}; will re-fetch")
+      
+    # Try nflreadpy
+    if 'nflreadpy' in mods:
+      nrp = mods['nflreadpy']
+      try:
+        got = None
+        try:
+          got = nrp.tidy.read_gamelogs(s)
+        except Exception:
+          pass
+        if got is None and hasattr(nrp, "load_gamelogs"):
+          try:
+            got = nrp.load_gamelogs(s)
+          except Exception:
+            pass
+        if got is None and hasattr(nrp, "gamelogs"):
+          try:
+            got = nrp.gamelogs(s)
+          except Exception:
+            pass
+        
+        if got is not None:
+          df = pd.DataFrame(got)
+          write_parquet(df, out_path)
+          results.append(df)
+          logger.info(f"Fetched gamelogs for {s} via nflreadpy")
+          time.sleep(sleep_between)
+          continue
+        else:
+          logger.warning("nflreadpy installed but could not auto-fetch gamelogs")
+      except Exception as e:
+        logger.exception("Error while using nflreadpy for gamelogs (falling back): %s", e)
+
+    # Try nfl_data_py
+    if 'nfl_data_py' in mods:
+      ndp = mods['nfl_data_py']
+      try:
+        got = None
+        if hasattr(ndp, "get_gamelogs"):
+          got = ndp.get_gamelogs(s)
+        elif hasattr(ndp, "gamelogs"):
+          got = ndp.gamelogs(s)
+        if got is not None:
+          df = pd.DataFrame(got)
+          write_parquet(df, out_path)
+          results.append(df)
+          logger.info(f"Fetched gamelogs for {s} via nfl_data_py")
+          time.sleep(sleep_between)
+          continue
+      except Exception as e:
+        logger.exception("Error while using nfl_data_py for gamelogs (falling back): %s, e")
+    
+    # Fallback demo
+    logger.info(f"No fetching library worked for season {s}. Writing demo gamelogs file.")
+    demo = pd.DataFrame([
+      {"game_id": 1, "player_id": 1, "seasons": s, "yards": 5478, "td": 8},
+    ])
+    write_parquet(demo, out_path)
+    results.append(demo)
+  
+  return pd.concat(results, ignore_index=True)
+
+def main(args):
+  seasons = args.seasons if args.seasons else [2023]
+  force = args.force
+  if args.rosters:
+    logger.info(f"Fetching rosters for seasons: {seasons} (force={force})")
+    fetch_rosters(seasons=seasons, force=force)
+  if args.gamelogs:
+    logger.info(f"Fetching gamelogs for seasons: {seasons} (force={force})")
+    fetch_gamelogs(seasons=seasons, force=force)
+  if not args.rosters and not args.gamelogs:
+    # default run both
+    fetch_rosters(seasons=seasons, force=force)
+    fetch_gamelogs(seasons=seasons, force=force)
+    
+
+if __name__ == "__main__":
+  parser = argparse.ArgumentParser(description="NFL data fetcher (starter).")
+  parser.add_argument("--seasons", "-s", type=int, nargs="+", help="Seasons to fetch (e.g. 2023 2022)", default=[2023])
+  parser.add_argument("--force", "-f", action="store_true", help="Force re-fetch even if raw files exist")
+  parser.add_argument("--rosters", action="store_true", help="Fetch rosters")
+  parser.add_argument("--gamelogs", action="store_true", help="Fetch gamelogs")
+  args = parser.parse_args()
+  main(args)
