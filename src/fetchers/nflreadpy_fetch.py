@@ -178,6 +178,7 @@ def fetch_gamelogs(seasons=[2023], force=False, sleep_between=0.5):
 
   mods = use_nfl_library_available()
   results = []
+
   for s in seasons:
     out_path = RAW_DIR / f"gamelogs_{s}.parquet"
     if out_path.exists() and not force:
@@ -188,7 +189,9 @@ def fetch_gamelogs(seasons=[2023], force=False, sleep_between=0.5):
         continue
       except Exception:
         logger.warning(f"Failed to read existing {out_path}; will re-fetch")
-      
+        
+    got = None
+
     # Try nflreadpy
     if 'nflreadpy' in mods:
       nrp = mods['nflreadpy']
@@ -230,6 +233,7 @@ def fetch_gamelogs(seasons=[2023], force=False, sleep_between=0.5):
           got = ndp.get_gamelogs(s)
         elif hasattr(ndp, "gamelogs"):
           got = ndp.gamelogs(s)
+        
         if got is not None:
           df = pd.DataFrame(got)
           write_parquet(df, out_path)
@@ -243,7 +247,7 @@ def fetch_gamelogs(seasons=[2023], force=False, sleep_between=0.5):
     # Fallback demo
     logger.info(f"No fetching library worked for season {s}. Writing demo gamelogs file.")
     demo = pd.DataFrame([
-      {"game_id": 1, "player_id": 1, "seasons": s, "yards": 5478, "td": 8},
+      {"game_id": 1, "player_id": 1, "season": s, "yards": 5478, "td": 8},
     ])
     write_parquet(demo, out_path)
     results.append(demo)
