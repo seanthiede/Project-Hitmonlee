@@ -129,3 +129,11 @@ def plot_top_players_bar(topn_df):
         margin=dict(t=50, b=100)
     )
     return fig
+
+def get_player_headshot(player_id):
+    """Holt die Headshot-URL für einen bestimmten Spieler aus der DB."""
+    query = f"SELECT headshot_url FROM players WHERE player_id = '{player_id}'"
+    df = get_data_from_db(query)
+    if not df.empty and df['headshot_url'].iloc[0]:
+        return df['headshot_url'].iloc[0]
+    return "https://via.placeholder.com/150" # Fallback, falls kein Bild da ist
