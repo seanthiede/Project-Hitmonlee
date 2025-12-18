@@ -41,6 +41,25 @@ def get_top_offensive_players(season=2023, top_n=10):
 
     if players.empty or gamelogs.empty:
         return pd.DataFrame()
+    
+    # --- DER FIX FÜR DIE NUMMER-SPALTEN ---
+    # Wir prüfen, ob die erste Spalte '0' heißt. Wenn ja, ist der Header in Zeile 0 gerutscht.
+    if '0' in players.columns:
+        # 1. Wir nehmen die erste Zeile (index 0) als neue Spaltennamen
+        new_header = players.iloc[0] 
+        # 2. Wir löschen die erste Zeile aus den Daten
+        players = players[1:] 
+        # 3. Wir setzen die neuen Spaltennamen
+        players.columns = new_header
+        # 4. Leerzeichen entfernen, falls vorhanden
+        players.columns = [str(c).strip() for c in players.columns]
+    
+    # Das gleiche zur Sicherheit für gamelogs
+    if '0' in gamelogs.columns:
+        new_header = gamelogs.iloc[0]
+        gamelogs = gamelogs[1:]
+        gamelogs.columns = new_header
+        gamelogs.columns = [str(c).strip() for c in gamelogs.columns]
 
     # 1. Radikale Reinigung: Leerzeichen aus Spaltennamen entfernen
     players.columns = [c.strip() for c in players.columns]
@@ -90,16 +109,23 @@ def get_top_offensive_players(season=2023, top_n=10):
 
 def plot_top_players_bar(topn_df):
     """Erstellt das Balkendiagramm mit Plotly."""
-    if topn_df.empty:
+    if topn_df is None or topn_df.empty:
         return None
-    
+        
     fig = px.bar(
-        topn_df,
-        x="full_name",
+        topn_df, 
+        x="full_name", 
         y="yards", 
-        color="team",
-        title="Top Players by Yards",
-        template="plotly_datk"
+        color="team", 
+        title="Top Players by Yards"
+        # Wir entfernen template="plotly_dark" oder ersetzen es durch "none"
     )
-    fig.update_layout(xaxis_tickangle=-30)
+    
+    # Statt im Konstruktor setzen wir das Design hier manuell, 
+    # das ist weniger fehleranfällig:
+    fig.update_layout(
+        template="plotly_dark",
+        xaxis_tickangle=-30,
+        margin=dict(t=50, b=100)
+    )
     return fig

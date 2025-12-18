@@ -14,10 +14,34 @@ logger = logging.getLogger("ingest")
 def _safe_read(path: Path) -> pd.DataFrame:
     if not path.exists():
         raise FileNotFoundError(path)
-    if path.suffix == ".parquet":
-        return pd.read_parquet(path)
-    else:
-        return pd.read_csv(path)
+    
+    # Wenn es die Players-Datei ist, laden wir sie OHNE Header
+    if "players" in path.name.lower():
+        logger.info(f"Erzwinge Header-Struktur für {path.name}...")
+        df = pd.read_parquet(path) if path.suffix == ".parquet" else pd.read_csv(path, header=None)
+        
+        # Falls der Header schon als Zahlen (0, 1, 2) da ist oder Bernard in der ersten Zeile steht
+        if isinstance(df.columns[0], int) or str(df.columns[0]) == '0' or "Bernard" in str(df.columns[6]):
+            # Wir definieren die wichtigsten Spalten, die wir für dein Dashboard brauchen
+            # Die Reihenfolge entspricht exakt deiner CSV/Screenshots
+            new_cols = [
+                "season", "team", "position", "pos_detail", "depth", "status", 
+                "full_name", "first_name", "last_name", "birth_date", "height", 
+                "weight", "college", "player_id", "gsis_id", "espn_id", 
+                "sportradar_id", "yahoo_id", "rotowire_id", "pff_id", "pfr_id", 
+                "fantasy_data_id", "sleeper_id", "years_exp", "headshot_url", "is_active"
+            ]
+            
+            # Wir füllen den Rest mit "extra", falls die Datei mehr Spalten hat
+            if len(df.columns) > len(new_cols):
+                new_cols += [f"extra_{i}" for i in range(len(df.columns) - len(new_cols))]
+            
+            df.columns = new_cols[:len(df.columns)]
+            
+        return df
+
+    # Normales Laden für Gamelogs (die scheinen ja zu funktionieren)
+    return pd.read_parquet(path) if path.suffix == ".parquet" else pd.read_csv(path)
     
 def normalize_players(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -73,7 +97,7 @@ def upsert_table(df: pd.DataFrame, table_name: str, conn: sqlite3.Connection, if
     # 'replace' sorgt dafür, dass die alte (kaputte) Struktur gelöscht wird
     df.to_sql(table_name, conn, if_exists=if_exists, index=False)
     logger.info(f"Wrote {len(df)} rows into table '{table_name}'")
-    
+
 def ingest_season(season: int):
     conn = sqlite3.connect(DB_PATH)
 
