@@ -14,8 +14,6 @@ def check_columns():
     print("Spalten in der Tabelle 'players':", [c[1] for c in cols])
     conn.close()
 
-check_columns()
-
 def get_data_from_db(query):
     """
     Diese Funktion verbindet sich mit der Datenbank, führt einen 
@@ -31,80 +29,70 @@ def get_data_from_db(query):
     conn.close()
     return df
 
-def get_top_offensive_players(season=2023, top_n=10):
+def get_top_offensive_players(season=2023, top_n=10, positions=None, teams=None):
+    """
+    Holt Spieler- und Statistiken-Daten, bereinigt sie und filtert nach 
+    Saison, Position und Team.
+    """
     players = get_data_from_db("SELECT * FROM players")
     gamelogs = get_data_from_db("SELECT * FROM gamelogs")
 
-    if not players.empty:
-        # Das zeigt uns im Terminal, welche Spalten wir jetzt wirklich haben
-        print("Verfügbare Spalten in Players:", players.columns.tolist())
-
     if players.empty or gamelogs.empty:
         return pd.DataFrame()
-    
-    # --- DER FIX FÜR DIE NUMMER-SPALTEN ---
-    # Wir prüfen, ob die erste Spalte '0' heißt. Wenn ja, ist der Header in Zeile 0 gerutscht.
-    if '0' in players.columns:
-        # 1. Wir nehmen die erste Zeile (index 0) als neue Spaltennamen
-        new_header = players.iloc[0] 
-        # 2. Wir löschen die erste Zeile aus den Daten
-        players = players[1:] 
-        # 3. Wir setzen die neuen Spaltennamen
-        players.columns = new_header
-        # 4. Leerzeichen entfernen, falls vorhanden
-        players.columns = [str(c).strip() for c in players.columns]
-    
-    # Das gleiche zur Sicherheit für gamelogs
-    if '0' in gamelogs.columns:
-        new_header = gamelogs.iloc[0]
-        gamelogs = gamelogs[1:]
-        gamelogs.columns = new_header
-        gamelogs.columns = [str(c).strip() for c in gamelogs.columns]
 
-    # 1. Radikale Reinigung: Leerzeichen aus Spaltennamen entfernen
-    players.columns = [c.strip() for c in players.columns]
-    gamelogs.columns = [c.strip() for c in gamelogs.columns]
+    # 1. HEADER-REPARATUR (Falls '0' als Spaltenname erscheint)
+    for df in [players, gamelogs]:
+        if '0' in df.columns or 0 in df.columns:
+            new_header = df.iloc[0]
+            df.columns = [str(c).strip() for c in new_header]
+            df.drop(df.index[0], inplace=True)
+            df.reset_index(drop=True, inplace=True)
 
-    # 2. ID-Normalisierung mit Erfolgs-Kontrolle
-    for df_name, df in [("players", players), ("gamelogs", gamelogs)]:
+    # 2. ID-NORMALISIERUNG (GSIS_ID zu player_id)
+    for df in [players, gamelogs]:
+        # Wir suchen nach typischen ID-Spaltennamen, falls 'player_id' fehlt
         if 'player_id' not in df.columns:
-            # Wir suchen nach ALLEM, was wie eine ID aussieht
-            possible_ids = [c for c in df.columns if 'id' in c.lower()]
-            if possible_ids:
-                # Wir nehmen den ersten Treffer und taufen ihn um
-                df.rename(columns={possible_ids[0]: 'player_id'}, inplace=True)
-            else:
-                # Wenn gar nichts gefunden wird, zeigen wir die Spalten im Terminal
-                print(f"WARNUNG: Keine ID-Spalte in {df_name} gefunden! Vorhanden: {list(df.columns)}")
+            for col in ['gsis_id', 'id', 'playerID', '00-0017724']:
+                if col in df.columns:
+                    df.rename(columns={col: 'player_id'}, inplace=True)
+                    break
+        
+        # Radikale Reinigung der Spaltennamen (Leerzeichen entfernen)
+        df.columns = [str(c).strip() for c in df.columns]
 
-    # 3. Saison & Stats sicherstellen
-    if 'season' not in gamelogs.columns:
-        gamelogs['season'] = season
+    # 3. FILTERING (Bevor wir aggregieren und mergen)
+    # Filter auf die Saison in den Gamelogs
+    if 'season' in gamelogs.columns:
+        # Sicherstellen, dass season ein Integer ist für den Vergleich
+        gamelogs['season'] = pd.to_numeric(gamelogs['season'], errors='coerce')
+        gamelogs = gamelogs[gamelogs['season'] == int(season)]
     
-    gamelogs = gamelogs[gamelogs['season'] == season]
+    # Filter auf Positionen (z.B. ['QB', 'WR'])
+    if positions and 'position' in players.columns:
+        players = players[players['position'].isin(positions)]
 
-    # Sicherstellen, dass yards und td existieren
-    for col, alt in [('yards', 'yds'), ('td', 'touchdowns')]:
+    # Filter auf Teams (z.B. ['PHI', 'KC'])
+    if teams and 'team' in players.columns:
+        players = players[players['team'].isin(teams)]
+
+    # 4. AGGREGATION (Stats zusammenrechnen)
+    # Sicherstellen, dass yards und td existieren, sonst 0 setzen
+    for col in ['yards', 'td']:
         if col not in gamelogs.columns:
-            if alt in gamelogs.columns:
-                gamelogs.rename(columns={alt: col}, inplace=True)
-            else:
-                gamelogs[col] = 0
+            gamelogs[col] = 0
+        else:
+            gamelogs[col] = pd.to_numeric(gamelogs[col], errors='coerce').fillna(0)
 
-    # 4. Aggregation
     player_stats = gamelogs.groupby("player_id").agg({
         "yards": "sum",
         "td": "sum"
     }).reset_index()
 
-    # 5. Zusammenführen (Merge)
-    # Wir prüfen VORHER, ob beide Tabellen player_id haben
-    if 'player_id' in player_stats.columns and 'player_id' in players.columns:
-        combined = player_stats.merge(players, on="player_id", how="left")
-    else:
-        print("Fehler: Merge nicht möglich, player_id fehlt in einer der Tabellen.")
-        return pd.DataFrame()
+    # 5. MERGE (Zusammenführen)
+    # 'inner' join sorgt dafür, dass nur Spieler bleiben, die Stats haben UND die Filter überlebt haben
+    combined = player_stats.merge(players, on="player_id", how="inner")
     
+    # Sortieren und Top N zurückgeben
     return combined.sort_values(by="yards", ascending=False).head(top_n)
 
 def plot_top_players_bar(topn_df):
