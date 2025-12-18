@@ -1,6 +1,7 @@
 import sqlite3
 import pandas as pd
 from pathlib import Path
+import plotly.express as px
 
 
 DB_PATH = Path("db/nfl.db")
@@ -46,3 +47,19 @@ def get_top_offensive_players(season=2023, top_n=10):
     top_players = combined.sort_values(by="yards", ascending=False).head(top_n)
 
     return top_players
+
+def plot_top_players_bar(topn_df):
+    """Erstellt das Balkendiagramm mit Plotly."""
+    if topn_df.empty:
+        return None
+    
+    fig = px.bar(
+        topn_df,
+        x="full_name",
+        y="yards", 
+        color="team",
+        title="Top Players by Yards",
+        template="plotly_datk"
+    )
+    fig.update_layout(xaxis_tickangle=-30)
+    
