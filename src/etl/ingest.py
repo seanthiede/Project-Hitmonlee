@@ -69,11 +69,11 @@ def normalize_gamelogs(df: pd.DataFrame) -> pd.DataFrame:
     
     return df
 
-def upsert_table(df: pd.DataFrame, table_name: str, conn: sqlite3.Connection, if_exists="append"):
-    # append and rely on dedupe later if needed
+def upsert_table(df: pd.DataFrame, table_name: str, conn: sqlite3.Connection, if_exists="replace"):
+    # 'replace' sorgt dafür, dass die alte (kaputte) Struktur gelöscht wird
     df.to_sql(table_name, conn, if_exists=if_exists, index=False)
     logger.info(f"Wrote {len(df)} rows into table '{table_name}'")
-
+    
 def ingest_season(season: int):
     conn = sqlite3.connect(DB_PATH)
 

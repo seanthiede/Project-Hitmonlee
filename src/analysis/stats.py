@@ -6,6 +6,16 @@ import plotly.express as px
 
 DB_PATH = Path("db/nfl.db")
 
+def check_columns():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(players)")
+    cols = cursor.fetchall()
+    print("Spalten in der Tabelle 'players':", [c[1] for c in cols])
+    conn.close()
+
+check_columns()
+
 def get_data_from_db(query):
     """
     Diese Funktion verbindet sich mit der Datenbank, führt einen 
@@ -22,31 +32,61 @@ def get_data_from_db(query):
     return df
 
 def get_top_offensive_players(season=2023, top_n=10):
-    """
-    Holt die Spieler und Statistiken, führt sie zusammen und berechnet die Top-Spieler.
-    """
+    players = get_data_from_db("SELECT * FROM players")
+    gamelogs = get_data_from_db("SELECT * FROM gamelogs")
 
-    # first, load data
-    players = get_data_from_db("SELECT player_id, full_name, team, position FROM players")
-    gamelogs = get_data_from_db(f"SELECT player_id, yards, td FROM gamelogs WHERE season = {season}")
+    if not players.empty:
+        # Das zeigt uns im Terminal, welche Spalten wir jetzt wirklich haben
+        print("Verfügbare Spalten in Players:", players.columns.tolist())
 
-    if players.empty() or gamelogs.empty():
+    if players.empty or gamelogs.empty:
+        return pd.DataFrame()
+
+    # 1. Radikale Reinigung: Leerzeichen aus Spaltennamen entfernen
+    players.columns = [c.strip() for c in players.columns]
+    gamelogs.columns = [c.strip() for c in gamelogs.columns]
+
+    # 2. ID-Normalisierung mit Erfolgs-Kontrolle
+    for df_name, df in [("players", players), ("gamelogs", gamelogs)]:
+        if 'player_id' not in df.columns:
+            # Wir suchen nach ALLEM, was wie eine ID aussieht
+            possible_ids = [c for c in df.columns if 'id' in c.lower()]
+            if possible_ids:
+                # Wir nehmen den ersten Treffer und taufen ihn um
+                df.rename(columns={possible_ids[0]: 'player_id'}, inplace=True)
+            else:
+                # Wenn gar nichts gefunden wird, zeigen wir die Spalten im Terminal
+                print(f"WARNUNG: Keine ID-Spalte in {df_name} gefunden! Vorhanden: {list(df.columns)}")
+
+    # 3. Saison & Stats sicherstellen
+    if 'season' not in gamelogs.columns:
+        gamelogs['season'] = season
+    
+    gamelogs = gamelogs[gamelogs['season'] == season]
+
+    # Sicherstellen, dass yards und td existieren
+    for col, alt in [('yards', 'yds'), ('td', 'touchdowns')]:
+        if col not in gamelogs.columns:
+            if alt in gamelogs.columns:
+                gamelogs.rename(columns={alt: col}, inplace=True)
+            else:
+                gamelogs[col] = 0
+
+    # 4. Aggregation
+    player_stats = gamelogs.groupby("player_id").agg({
+        "yards": "sum",
+        "td": "sum"
+    }).reset_index()
+
+    # 5. Zusammenführen (Merge)
+    # Wir prüfen VORHER, ob beide Tabellen player_id haben
+    if 'player_id' in player_stats.columns and 'player_id' in players.columns:
+        combined = player_stats.merge(players, on="player_id", how="left")
+    else:
+        print("Fehler: Merge nicht möglich, player_id fehlt in einer der Tabellen.")
         return pd.DataFrame()
     
-    # second, aggregation (sum stats per player)
-    player_stats = gamelogs.groupby("player_id").agg({
-        "yards": "sum", 
-        "td": "sum"
-    }).reset_index() # makes normal column of player_id
-
-    # third, merging
-    # we merge de stats def with the name df with player_id
-    combined = player_stats.merge(players, on="player_id", how="left")
-
-    # 4. sort (best first)
-    top_players = combined.sort_values(by="yards", ascending=False).head(top_n)
-
-    return top_players
+    return combined.sort_values(by="yards", ascending=False).head(top_n)
 
 def plot_top_players_bar(topn_df):
     """Erstellt das Balkendiagramm mit Plotly."""
@@ -62,4 +102,4 @@ def plot_top_players_bar(topn_df):
         template="plotly_datk"
     )
     fig.update_layout(xaxis_tickangle=-30)
-    
+    return fig

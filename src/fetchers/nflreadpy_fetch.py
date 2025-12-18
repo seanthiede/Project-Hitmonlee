@@ -227,11 +227,8 @@ def fetch_gamelogs(seasons=[2023], force=False, sleep_between=0.5):
     if 'nfl_data_py' in mods:
       ndp = mods['nfl_data_py']
       try:
-        got = None
-        if hasattr(ndp, "get_gamelogs"):
-          got = ndp.get_gamelogs(s)
-        elif hasattr(ndp, "gamelogs"):
-          got = ndp.gamelogs(s)
+        # Dies ist der Standard-Befehl für wöchentliche Stats/Gamelogs
+        got = ndp.import_weekly_data([s]) 
         
         if got is not None:
           df = pd.DataFrame(got)
@@ -241,7 +238,7 @@ def fetch_gamelogs(seasons=[2023], force=False, sleep_between=0.5):
           time.sleep(sleep_between)
           continue
       except Exception as e:
-        logger.exception("Error while using nfl_data_py for gamelogs (falling back): %s", e)
+        logger.error(f"Error using nfl_data_py: {e}")
     
     # Fallback demo
     logger.info(f"No fetching library worked for season {s}. Writing demo gamelogs file.")
