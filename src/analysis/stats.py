@@ -1,52 +1,48 @@
 import sqlite3
 import pandas as pd
 from pathlib import Path
-import plotly.express as px
+
 
 DB_PATH = Path("db/nfl.db")
 
-import pandas as pd
-from pathlib import Path
-
-players_df = pd.read_parquet(Path("raw/players_2023.parquet"))
-gamelogs_df = pd.read_parquet(Path("raw/gamelogs_2023.parquet"))
-
-print(players_df.columns)
-print(gamelogs_df.columns)
-print(players_df.head())
-
-
-def load_tables(limit_players=None, limit_gamelogs=None):
+def get_data_from_db(query):
+    """
+    Diese Funktion verbindet sich mit der Datenbank, führt einen 
+    Befehl (Query) aus und gibt das Ergebnis als Pandas DataFrame zurück.
+    """
+    if not DB_PATH.exists():
+        print("Fehler: Datenbank nicht gefunden! Hast du ingest.py schon ausgeführt?")
+        return pd.DataFrame() # returns empty df
+    
     conn = sqlite3.connect(DB_PATH)
+    # pd.read_sql macht die ganze Arbeit: Verbindung öffnen, Daten holen, Tabelle erstellen
+    df = pd.read_sql(query, conn)
+    conn.close()
+    return df
 
-    try:
-        players = pd.read_sql("SELECT * FROM players", conn)
-        gamelogs = pd.read_sql("SELECT * FROM gamelogs", conn)
-    finally:
-        conn.close()
+def get_top_offensive_players(season=2023, top_n=10):
+    """
+    Holt die Spieler und Statistiken, führt sie zusammen und berechnet die Top-Spieler.
+    """
+
+    # first, load data
+    players = get_data_from_db("SELECT player_id, full_name, team, position FROM players")
+    gamelogs = get_data_from_db(f"SELECT player_id, yards, td FROM gamelogs WHERE season = {season}")
+
+    if players.empty() or gamelogs.empty():
+        return pd.DataFrame()
     
-    return players, gamelogs
-
-def aggregate_player_totals(gamelogs_df):
-    # simple sum of yards and touchdown per player
-    if "yards" not in gamelogs_df.columns:
-        raise ValueError("gamelogs no 'yards' column")
-    agg = gamelogs_df.groupby("player_id", as_index=False).agg({
-        "yards": "sum",
+    # second, aggregation (sum stats per player)
+    player_stats = gamelogs.groupby("player_id").agg({
+        "yards": "sum", 
         "td": "sum"
-    }).rename(columns={"td":"touchdowns"})
+    }).reset_index() # makes normal column of player_id
 
-    return agg
+    # third, merging
+    # we merge de stats def with the name df with player_id
+    combined = player_stats.merge(players, on="player_id", how="left")
 
-def top_players_by_yards(players_df, gamelogs_df, top_n=10):
-    agg = aggregate_player_totals(gamelogs_df)
-    merged = agg.merge(players_df, on="player_id", how="left")
-    topn = merged.sort_values("yards", ascending=False).head(top_n)
-    
-    return topn
+    # 4. sort (best first)
+    top_players = combined.sort_values(by="yards", ascending=False).head(top_n)
 
-def plot_top_players_bar(topn_df):
-    fig = px.bar(topn_df, x="full_name", y="yards", color="team", title="Top Players by Yards")
-    fig.update_layout(xaxis_tickangle=-30, margin=dict(t=40, b=80))
-
-    return fig
+    return top_players
